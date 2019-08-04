@@ -1,1 +1,384 @@
-test
+
+
+<!DOCTYPE html>
+
+<html lang="en" >
+<style>
+body {
+  margin:0;
+}
+
+canvas {
+  position: fixed;
+}
+.info {
+  position: absolute;
+  left: 50px;
+  bottom: 50px;
+}
+
+h1 {
+  color: white;
+  letter-spacing: 3px;
+  margin: 0;
+}
+.message {
+  margin: 0;
+  color: #b99362;
+}
+
+</style>
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>Limit Eye</title>
+
+</head>
+
+
+
+<body>
+
+
+
+<canvas id="webgl"></canvas>
+<div class="info">
+  <h1>Limit Eye.</h1>
+  <p class="message">Coming soon！</p>
+</div>
+
+
+
+<script id="vertexShader" type="x-shader/x-vertex">
+
+attribute vec4 a_position;
+
+
+
+uniform mat4 u_modelViewMatrix;
+
+uniform mat4 u_projectionMatrix;
+
+
+
+void main() {
+
+gl_Position = a_position;
+
+}
+
+</script>
+
+
+
+<script id="fragmentShader" type="x-shader/x-fragment">
+
+ precision highp float;
+
+  precision highp int;
+
+  
+
+  uniform vec2 u_resolution;
+
+  uniform vec2 u_mouse;
+
+  uniform float u_time;
+
+  uniform sampler2D u_noise;
+
+  
+
+  // movement variables
+
+  vec3 movement = vec3(.0);
+
+  
+
+  const int maxIterations = 256;
+
+  const float stopThreshold = 0.001;
+
+  const float stepScale = .5;
+
+  const float eps = 0.005;
+
+  
+
+  struct Surface {
+
+    int object_id;
+
+    float distance;
+
+    vec3 position;
+
+    vec3 colour;
+
+    float ambient;
+
+    float spec;
+
+  };
+
+  
+
+  // This function describes the world in distances from any given 3 dimensional point in space
+
+  float world(in vec3 position, inout int object_id) {
+
+    
+
+    vec2 polar = vec2(length(position)*.1, atan(position.y, position.x)+u_time*.1);
+
+    
+
+    float field = (sin(sin((polar.x+polar.y) * 10. + u_time * 5.) + polar.y * 5.)) * cos(polar.x + polar.y);
+
+    
+
+    vec3 pos = floor(position * .5);
+
+    object_id = int(floor(pos.x + pos.y + pos.z));
+
+    // position = mod(position, 1.) - .5;
+
+    return 1.-length(position.xy)+field*sin(u_time+position.z)*.15*(sin(position.z * 0.9 + u_time*5.) * .5 + .5);
+
+  }
+
+  float world(in vec3 position) {
+
+    int dummy = 0;
+
+    return world(position, dummy);
+
+  }
+
+  
+
+  vec3 getObjectColour(int object_id) {
+
+    float modid = mod(float(object_id), 5.);
+
+    if(modid == 0.) {
+
+      return vec3(.0, 0., 0.5);
+
+    } else if(modid == 1.) {
+
+      return vec3(.5, 0.5, 0.);
+
+    } else if(modid == 2.) {
+
+      return vec3(.5, 0.5, 0.5);
+
+    } else if(modid == 3.) {
+
+      return vec3(.0, 0.5, 0.5);
+
+    } else if(modid == 4.) {
+
+      return vec3(.0, 0.5, 0.);
+
+    }
+
+    return vec3(.5, 0., 0.);
+
+  }
+
+  
+
+  Surface getSurface(int object_id, float rayDepth, vec3 sp) {
+
+    return Surface(
+
+      object_id, 
+
+      rayDepth, 
+
+      sp, 
+
+      getObjectColour(object_id), 
+
+      .5, 
+
+      200.);
+
+  }
+
+  vec3 hsv2rgb(vec3 c) {
+
+      vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+
+      vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+
+      return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+
+  }
+
+  
+
+  // The raymarch loop
+
+  Surface rayMarch(vec3 ro, vec3 rd, float start, float end, inout float field, inout vec3 colour) {
+
+    float sceneDist = 1e4;
+
+    float rayDepth = start;
+
+    int object_id = 0;
+
+    for(int i = 0; i < maxIterations; i++) {
+
+      vec3 p = ro + rd * rayDepth;
+
+      sceneDist = world(p, object_id);
+
+      
+
+      float weight = sqrt(1. / sceneDist);
+
+      weight *= weight;
+
+      float density = pow(sceneDist * weight, .1);
+
+      field += density;
+
+      colour += hsv2rgb(vec3(sceneDist, 1.-sceneDist, field*.015)) * density;
+
+      
+
+      if(sceneDist < stopThreshold || rayDepth > end) {
+
+        break;
+
+      }
+
+      
+
+      rayDepth += sceneDist * stepScale;
+
+    }
+
+    
+
+    return getSurface(object_id, rayDepth, ro + rd * rayDepth);
+
+  }
+
+  
+
+  // Calculated the normal of any given point in space. Intended to be cast from the point of a surface
+
+  vec3 calculate_normal(in vec3 position) {
+
+    vec3 grad = vec3(
+
+      world(vec3(position.x + eps, position.y, position.z)) - world(vec3(position.x - eps, position.y, position.z)),
+
+      world(vec3(position.x, position.y + eps, position.z)) - world(vec3(position.x, position.y - eps, position.z)),
+
+      world(vec3(position.x, position.y, position.z + eps)) - world(vec3(position.x, position.y, position.z - eps))
+
+    );
+
+    
+
+    return normalize(grad);
+
+  }
+
+  vec3 path(float z) {
+
+    return vec3(0,0,0.);
+
+  }
+
+
+
+  void main() {
+
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.y, u_resolution.x);
+
+    
+
+    // movement
+
+    movement = path(u_time);
+
+    
+
+    // Camera and look-at
+
+    vec3 cam = vec3(0,0,-2);
+
+    vec3 lookAt = vec3(0,0,0);
+
+    
+
+    // add movement
+
+    lookAt += movement;
+
+    cam += movement;
+
+    
+
+    // Unit vectors
+
+    vec3 forward = normalize(lookAt - cam);
+
+    vec3 right = normalize(vec3(forward.z, 0., -forward.x));
+
+    vec3 up = normalize(cross(forward, right));
+
+    
+
+    // FOV
+
+    float FOV = .3+dot(uv.xy, uv.xy);
+
+    
+
+    // Ray origin and ray direction
+
+    vec3 ro = cam;
+
+    vec3 rd = normalize(forward + FOV * uv.x * right + FOV * uv.y * up);
+
+    
+
+    // Ray marching
+
+    const float clipNear = 0.;
+
+    const float clipFar = 32.;
+
+    float field = 0.;
+
+    vec3 colour = vec3(0.);
+
+    Surface objectSurface = rayMarch(ro, rd, clipNear, clipFar, field, colour);
+
+    gl_FragColor = vec4(vec3(colour*.01), 1.);
+
+  }
+
+  
+
+</script>
+
+
+
+<script src='js/wtc-gl.js'></script>
+
+<script src="js/script.js"></script>
+
+
+
+</body>
+
+</html>
